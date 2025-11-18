@@ -5,9 +5,9 @@ const containerUrl = "https://aicodeledgerlineage.blob.core.windows.net/lineage?
 const prefix = "local_repo/models/";
 
 
-// ------------------------------
-// LIST BLOBS
-// ------------------------------
+// ---------------------------------------------------------------------------
+// LIST JSON FILES IN BLOB STORAGE
+// ---------------------------------------------------------------------------
 async function listJsonFiles() {
     const listUrl = `${containerUrl}&restype=container&comp=list&prefix=${prefix}`;
     console.log("Listing URL:", listUrl);
@@ -24,12 +24,13 @@ async function listJsonFiles() {
 }
 
 
-// ------------------------------
-// FETCH JSON FILE
-// ------------------------------
+// ---------------------------------------------------------------------------
+// FETCH INDIVIDUAL JSON FILE
+// ---------------------------------------------------------------------------
 async function fetchJson(name) {
     const blobBase = containerUrl.split("?")[0];
     const sas = "?" + containerUrl.split("?")[1];
+
     const url = `${blobBase}/${name}${sas}`;
     console.log("Fetching:", url);
 
@@ -38,25 +39,36 @@ async function fetchJson(name) {
 }
 
 
-// ------------------------------
-// CONVERT JSON → Cytoscape nodes + edges
-// ------------------------------
+// ---------------------------------------------------------------------------
+// CONVERT ONE MODEL JSON → Cytoscape Nodes + Edges
+// ---------------------------------------------------------------------------
 function convertToCytoscape(model) {
-    const target = model.target_table || model.file_name || "unknown_target";
+    // Determine the model ID (unique identifier)
+    const target =
+        model.model_name ||
+        model.target_table ||
+        (model.file_name ? model.file_name.replace(".sql", "") : null);
 
-    const nodes = [];
-    const edges = [];
+    if (!target) {
+        console.warn("❗ Model has no usable identifier:", model);
+        return { nodes: [], edges: [] };
+    }
 
-    // Target table/view node
+    let nodes = [];
+    let edges = [];
+
+    // MODEL NODE (green)
     nodes.push({
         data: {
             id: target,
-            type: model.target_type,
-            fullModel: model  // used for column popup
+            label: target,
+            type: "model",
+            entity: "model",
+            fullModel: model
         }
     });
 
-    // Each source → its own node + edge
+    // SOURCE / REF NODES (blue)
     for (const src of model.sources || []) {
         const srcKey = src.table || src.model || "unknown_source";
         const srcId = `${src.name}.${srcKey}`;
@@ -64,7 +76,9 @@ function convertToCytoscape(model) {
         nodes.push({
             data: {
                 id: srcId,
-                type: src.type
+                label: srcId,
+                type: src.type,
+                entity: "source"
             }
         });
 
@@ -80,11 +94,11 @@ function convertToCytoscape(model) {
 }
 
 
-// ------------------------------
+// ---------------------------------------------------------------------------
 // MAIN EXECUTION
-// ------------------------------
+// ---------------------------------------------------------------------------
 (async () => {
-    console.log("Loading JSON files...");
+    console.log("Loading JSON files…");
 
     const files = await listJsonFiles();
     console.log("Files found:", files);
@@ -97,33 +111,56 @@ function convertToCytoscape(model) {
         allElements.push(...nodes, ...edges);
     }
 
-    console.log("Elements prepared:", allElements);
+    console.log("Elements prepared:", allElements.length);
 
-    // Create Cytoscape instance
+    // ----------------------------------------------------------------------
+    // CYTOSCAPE INITIALISATION
+    // ----------------------------------------------------------------------
     const cy = cytoscape({
         container: document.getElementById("cy"),
         elements: allElements,
-        layout: { name: "cose", padding: 30 },
+
+        layout: {
+            name: "cose",
+            padding: 50
+        },
+
         style: [
+            // MODEL NODES
             {
-                selector: 'node[type="table"]',
-                style: { 'background-color': '#6cca98', 'label': 'data(id)' }
-            },
-            {
-                selector: 'node[type="dbt_source"]',
-                style: { 'background-color': '#003057', 'label': 'data(id)' }
-            },
-            {
-                selector: 'node[type="ref"]',
-                style: { 'background-color': '#27a878', 'label': 'data(id)' }
-            },
-            {
-                selector: 'edge',
+                selector: 'node[entity="model"]',
                 style: {
-                    'width': 2,
-                    'line-color': '#777',
-                    'target-arrow-color': '#777',
-                    'target-arrow-shape': 'triangle'
+                    "background-color": "#6cca98",
+                    "border-width": 3,
+                    "border-color": "#003057",
+                    "label": "data(label)",
+                    "font-size": 10,
+                    "text-valign": "center",
+                    "text-halign": "center"
+                }
+            },
+
+            // SOURCE / REF NODES
+            {
+                selector: 'node[entity="source"]',
+                style: {
+                    "background-color": "#003057",
+                    "color": "#ffffff",
+                    "label": "data(label)",
+                    "font-size": 9,
+                    "text-valign": "center",
+                    "text-halign": "center"
+                }
+            },
+
+            // EDGES
+            {
+                selector: "edge",
+                style: {
+                    "width": 2,
+                    "line-color": "#777",
+                    "target-arrow-color": "#777",
+                    "target-arrow-shape": "triangle"
                 }
             }
         ]
@@ -131,45 +168,60 @@ function convertToCytoscape(model) {
 
     console.log("Cytoscape initialised.");
 
-    // ------------------------------
-    // CLICK HANDLER: COLUMN LINEAGE POPUP
-    // ------------------------------
-    cy.on('tap', 'node', evt => {
+
+    // ----------------------------------------------------------------------
+    // NODE CLICK HANDLER — SHOW COLUMN LINEAGE ONLY FOR MODEL NODES
+    // ----------------------------------------------------------------------
+    cy.on("tap", "node", evt => {
         const node = evt.target;
-        const model = node.data('fullModel');
 
-        const panel = document.getElementById("info-panel");
-
-        // Hide panel if this node has no column metadata
-        if (!model || !model.columns) {
-            panel.style.display = "none";
+        // NOT A MODEL → close panel
+        if (node.data("entity") !== "model") {
+            document.getElementById("info-panel").style.display = "none";
             return;
         }
 
+        const model = node.data("fullModel");
+        if (!model) {
+            console.warn("No fullModel for node:", node.id());
+            return;
+        }
+
+        const columns = model.columns;
+        if (!columns || Object.keys(columns).length === 0) {
+            console.warn("Model has no columns:", model);
+            document.getElementById("info-panel").style.display = "none";
+            return;
+        }
+
+        // SHOW PANEL
+        const panel = document.getElementById("info-panel");
         const title = document.getElementById("panel-title");
         const content = document.getElementById("panel-content");
 
-        title.innerText = model.target_table || node.id();
+        title.innerText = model.target_table || model.model_name;
 
         let html = "";
-
-        for (const [col, meta] of Object.entries(model.columns)) {
-            html += `<div style="margin-bottom: 10px;">
+        for (const [col, meta] of Object.entries(columns)) {
+            html += `<div style="margin-bottom: 12px;">
                 <strong>${col}</strong><br>
                 <em>Sources:</em><br>`;
 
-            const sources = Array.isArray(meta.source)
-                ? meta.source
-                : meta.source ? [meta.source] : [];
+            // Accepts "source", "derived_from", etc
+            const sources =
+                (Array.isArray(meta.source) && meta.source) ||
+                (meta.source ? [meta.source] : null) ||
+                meta.derived_from ||
+                [];
 
             if (sources.length) {
                 html += sources.map(s => `- ${s}`).join("<br>");
             } else {
-                html += `<span style="color:#888;">(none)</span>`;
+                html += `<span style="color:#888">(none)</span>`;
             }
 
-            if (meta.transformation) {
-                html += `<br><em>Transformation:</em><br>${meta.transformation}`;
+            if (meta.transform || meta.transformation) {
+                html += `<br><em>Transformation:</em><br>${meta.transform || meta.transformation}`;
             }
 
             html += `<hr></div>`;
