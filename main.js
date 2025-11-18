@@ -94,11 +94,25 @@ function ensureNode(nodeMap, id, entity) {
     }
 
     for (const src of model.sources || []) {
-      const srcKey = src.table || src.model || "unknown_source";
-      const srcId = `${src.name}.${srcKey}`;
-      ensureNode(nodeMap, srcId, "source");
-      edges.push({ source: srcId, target: targetId });
-    }
+  
+      // CASE 1: dbt ref → link model → model
+      if (src.type === "ref" && src.model) {
+        const refModel = src.model.trim();
+        ensureNode(nodeMap, refModel, "model");
+        edges.push({ source: refModel, target: targetId });
+        continue;
+      }
+    
+      // CASE 2: dbt source → link source → model
+      if (src.type === "dbt_source") {
+        const srcId = `${src.name}.${src.table}`;
+        ensureNode(nodeMap, srcId, "source");
+        edges.push({ source: srcId, target: targetId });
+        continue;
+      }
+    
+      // fallback
+      console.warn("Unknown source type:", src);
   }
 
   // Pass 2 — apply inferred columns to sources
