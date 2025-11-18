@@ -2,7 +2,30 @@
 // Example:
 // const containerUrl = "https://aicodeledgerlineage.blob.core.windows.net/lineage?sv=xxxx&sig=xxxx";
 const containerUrl = "https://aicodeledgerlineage.blob.core.windows.net/lineage?sp=rl&st=2025-11-18T01:29:42Z&se=2026-11-18T09:44:42Z&spr=https&sv=2024-11-04&sr=c&sig=X8%2BwAKmeKXetzbfcVWDcpTaipOiahwXZzfaEJ2Qh8%2BE%3D";
-?")[0];
+const prefix = "local_repo/models/";
+
+
+// ---------------------------------------------------------------------------
+// LIST JSON FILES
+// ---------------------------------------------------------------------------
+async function listJsonFiles() {
+  const listUrl = `${containerUrl}&restype=container&comp=list&prefix=${prefix}`;
+  const res = await fetch(listUrl);
+  const xmlText = await res.text();
+  const xml = new DOMParser().parseFromString(xmlText, "application/xml");
+  const blobs = [...xml.getElementsByTagName("Blob")];
+
+  return blobs
+    .map((b) => b.getElementsByTagName("Name")[0].textContent)
+    .filter((name) => name.endsWith(".json"));
+}
+
+
+// ---------------------------------------------------------------------------
+// FETCH JSON
+// ---------------------------------------------------------------------------
+async function fetchJson(name) {
+  const blobBase = containerUrl.split("?")[0];
   const sas = "?" + containerUrl.split("?")[1];
   const url = `${blobBase}/${name}${sas}`;
   const res = await fetch(url);
