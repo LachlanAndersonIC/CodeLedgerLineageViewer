@@ -261,6 +261,26 @@ function ensureNode(nodeMap, id, entity) {
   });
 
   window.cy = cy;
+  // ----------------------------------------------------------------------
+  // DEBUG: VERIFY NODE CLICKS
+  // ----------------------------------------------------------------------
+  console.log("Adding debug click listeners...");
+  
+  cy.on("tap", (evt) => {
+    console.log("CY TAP EVENT:", evt);
+  });
+  
+  cy.on("tap", "node", (evt) => {
+    console.log("NODE TAP DETECTED:", evt.target.id(), evt.target.data());
+  });
+  
+  cy.on("select", "node", (evt) => {
+    console.log("NODE SELECTED:", evt.target.id());
+  });
+  
+  document.addEventListener("click", (e) => {
+    console.log("DOCUMENT CLICK:", e.target);
+  });
 
   console.log("Cytoscape initialised.");
 
