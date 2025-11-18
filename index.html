@@ -4,25 +4,25 @@
   <title>Lineage Explorer</title>
   <script src="https://unpkg.com/cytoscape/dist/cytoscape.min.js"></script>
   <style>
-    html, body {
+  html, body {
     margin: 0;
     padding: 0;
     height: 100%;
     width: 100%;
   }
 
+  /* Leave space on the right for the panel */
   #cy {
-    width: 100vw;
-    height: 100vh;
     position: absolute;
     top: 0;
     left: 0;
+    width: calc(100vw - 350px);  /* 350px = panel width */
+    height: 100vh;
     background: #ffffff;
+    z-index: 0;
   }
-  </style>
-</head>
-<body>
-  <div id="info-panel" style="
+
+  #info-panel {
     position: fixed;
     right: 0;
     top: 0;
@@ -34,7 +34,12 @@
     overflow-y: auto;
     font-family: sans-serif;
     display: none;
-  ">
+    z-index: 10;    /* 👈 THIS PUTS IT ABOVE CYTOSCAPE */
+  }
+</style>
+</head>
+<body>
+  <div id="info-panel">
     <h2 id="panel-title"></h2>
     <div id="panel-content"></div>
   </div>
