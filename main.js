@@ -271,7 +271,7 @@ function ensureNode(nodeMap, id, entity) {
   cy.on("tap", "node", (evt) => {
     const node = evt.target;
     const data = node.data();
-    const columns = data.columns || null;
+    const columns = node.scratch('columns');
 
     const panel = document.getElementById("info-panel");
     const title = document.getElementById("panel-title");
