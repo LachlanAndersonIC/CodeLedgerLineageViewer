@@ -7,93 +7,54 @@ const containerUrl = "https://aicodeledgerlineage.blob.core.windows.net/lineage?
 const prefix = "local_repo/models/";
 
 async function listJsonFiles() {
-    // Build list URL with prefix filter
     const listUrl = `${containerUrl}&restype=container&comp=list&prefix=${prefix}`;
-
     const res = await fetch(listUrl);
     const xmlText = await res.text();
 
     const xml = new DOMParser().parseFromString(xmlText, "application/xml");
     const blobs = [...xml.getElementsByTagName("Blob")];
 
-    // Return blob names relative to prefix
     return blobs
         .map(b => b.getElementsByTagName("Name")[0].textContent)
         .filter(name => name.endsWith(".json"));
 }
 
 async function fetchJson(name) {
-    // Real blob URL: base container URL prefix + blob name + SAS token
     const blobBase = containerUrl.split("?")[0];
     const sas = "?" + containerUrl.split("?")[1];
-
     const url = `${blobBase}/${name}${sas}`;
-
     return fetch(url).then(r => r.json());
 }
 
 function convertToCytoscape(model) {
     const target = model.target_table || model.file_name || "unknown_target";
 
-    return {
-        target,
-        nodes: [{ data: { id: target, type: model.target_type, fullModel: model }}],
-        edges: model.sources.map(src => {
-            const srcKey = src.table || src.model;
-            const id = `${src.name}.${srcKey}`;
-            return {
-                sourceNode: { data: { id: id, type: src.type }},
-                edge: { data: { source: id, target: target }}
-            };
-        })
-    };
+    let nodes = [];
+    let edges = [];
+
+    nodes.push({
+        data: {
+            id: target,
+            type: model.target_type,
+            fullModel: model
+        }
+    });
+
+    for (const src of model.sources || []) {
+        const srcKey = src.table || src.model || "unknown_source";
+        const srcId = `${src.name}.${srcKey}`;
+
+        nodes.push({ data: { id: srcId, type: src.type } });
+
+        edges.push({
+            data: { source: srcId, target: target }
+        });
+    }
+
+    return { nodes, edges };
 }
 
-// Add click handler after cytoscape() call:
-
-cy.on('tap', 'node', evt => {
-    const node = evt.target;
-    const model = node.data('fullModel');
-
-    if (!model || !model.columns) {
-        document.getElementById("info-panel").style.display = "none";
-        return;
-    }
-
-    const panel = document.getElementById("info-panel");
-    const title = document.getElementById("panel-title");
-    const content = document.getElementById("panel-content");
-
-    title.innerText = model.target_table || node.id();
-
-    let html = "";
-
-    for (const [col, meta] of Object.entries(model.columns)) {
-        html += `<div style="margin-bottom: 10px;">
-            <strong>${col}</strong><br>
-            <em>Sources:</em><br>`;
-
-        if (meta.source) {
-            if (Array.isArray(meta.source)) {
-                html += meta.source.map(s => `- ${s}`).join("<br>");
-            } else {
-                html += `- ${meta.source}`;
-            }
-        } else {
-            html += `<span style="color:#888;">(none)</span>`;
-        }
-
-        if (meta.transformation) {
-            html += `<br><em>Transformation:</em><br>${meta.transformation}`;
-        }
-
-        html += `<hr></div>`;
-    }
-
-    content.innerHTML = html;
-    panel.style.display = "block";
-});
-
+// MAIN EXECUTION
 (async () => {
     const files = await listJsonFiles();
 
@@ -105,7 +66,8 @@ cy.on('tap', 'node', evt => {
         allElements.push(...cyData.nodes, ...cyData.edges);
     }
 
-    cytoscape({
+    // IMPORTANT: SAVE INSTANCE
+    const cy = cytoscape({
         container: document.getElementById("cy"),
         elements: allElements,
         layout: { name: "cose", padding: 30 },
@@ -133,4 +95,51 @@ cy.on('tap', 'node', evt => {
             }
         ]
     });
+
+    // ADD CLICK HANDLER AFTER cy EXISTS
+    cy.on('tap', 'node', evt => {
+        const node = evt.target;
+        const model = node.data('fullModel');
+
+        if (!model || !model.columns) {
+            document.getElementById("info-panel").style.display = "none";
+            return;
+        }
+
+        const panel = document.getElementById("info-panel");
+        const title = document.getElementById("panel-title");
+        const content = document.getElementById("panel-content");
+
+        title.innerText = model.target_table || node.id();
+
+        let html = "";
+
+        for (const [col, meta] of Object.entries(model.columns)) {
+            html += `<div style="margin-bottom: 10px;">
+                <strong>${col}</strong><br>
+                <em>Sources:</em><br>`;
+
+            let sources = [];
+
+            if (meta.source) {
+                sources = Array.isArray(meta.source) ? meta.source : [meta.source];
+            }
+
+            if (sources.length > 0) {
+                html += sources.map(s => `- ${s}`).join("<br>");
+            } else {
+                html += `<span style="color:#888;">(none)</span>`;
+            }
+
+            if (meta.transformation) {
+                html += `<br><em>Transformation:</em><br>${meta.transformation}`;
+            }
+
+            html += `<hr></div>`;
+        }
+
+        content.innerHTML = html;
+        panel.style.display = "block";
+    });
+
 })();
