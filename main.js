@@ -9,18 +9,18 @@ const prefix = "local_repo/models/";
 // LIST JSON FILES IN BLOB STORAGE
 // ---------------------------------------------------------------------------
 async function listJsonFiles() {
-    const listUrl = `${containerUrl}&restype=container&comp=list&prefix=${prefix}`;
-    console.log("Listing URL:", listUrl);
+  const listUrl = `${containerUrl}&restype=container&comp=list&prefix=${prefix}`;
+  console.log("Listing URL:", listUrl);
 
-    const res = await fetch(listUrl);
-    const xmlText = await res.text();
-    const xml = new DOMParser().parseFromString(xmlText, "application/xml");
+  const res = await fetch(listUrl);
+  const xmlText = await res.text();
+  const xml = new DOMParser().parseFromString(xmlText, "application/xml");
 
-    const blobs = [...xml.getElementsByTagName("Blob")];
+  const blobs = [...xml.getElementsByTagName("Blob")];
 
-    return blobs
-        .map(b => b.getElementsByTagName("Name")[0].textContent)
-        .filter(name => name.endsWith(".json"));
+  return blobs
+    .map((b) => b.getElementsByTagName("Name")[0].textContent)
+    .filter((name) => name.endsWith(".json"));
 }
 
 
@@ -28,69 +28,41 @@ async function listJsonFiles() {
 // FETCH INDIVIDUAL JSON FILE
 // ---------------------------------------------------------------------------
 async function fetchJson(name) {
-    const blobBase = containerUrl.split("?")[0];
-    const sas = "?" + containerUrl.split("?")[1];
+  const blobBase = containerUrl.split("?")[0];
+  const sas = "?" + containerUrl.split("?")[1];
 
-    const url = `${blobBase}/${name}${sas}`;
-    console.log("Fetching:", url);
+  const url = `${blobBase}/${name}${sas}`;
+  console.log("Fetching:", url);
 
-    const res = await fetch(url);
-    return res.json();
+  const res = await fetch(url);
+  return res.json();
 }
 
 
 // ---------------------------------------------------------------------------
-// CONVERT ONE MODEL JSON → Cytoscape Nodes + Edges
+// HELPERS
 // ---------------------------------------------------------------------------
-function convertToCytoscape(model) {
-    // Determine the model ID (unique identifier)
-    const target =
-        model.model_name ||
-        model.target_table ||
-        (model.file_name ? model.file_name.replace(".sql", "") : null);
+function getModelId(model) {
+  // Stable ID for model nodes
+  return (
+    model.model_name ||
+    model.target_table ||
+    (model.file_name ? model.file_name.replace(".sql", "") : null)
+  );
+}
 
-    if (!target) {
-        console.warn("❗ Model has no usable identifier:", model);
-        return { nodes: [], edges: [] };
-    }
-
-    let nodes = [];
-    let edges = [];
-
-    // MODEL NODE (green)
-    nodes.push({
-        data: {
-            id: target,
-            label: target,
-            type: "model",
-            entity: "model",
-            fullModel: model
-        }
-    });
-
-    // SOURCE / REF NODES (blue)
-    for (const src of model.sources || []) {
-        const srcKey = src.table || src.model || "unknown_source";
-        const srcId = `${src.name}.${srcKey}`;
-
-        nodes.push({
-            data: {
-                id: srcId,
-                label: srcId,
-                type: src.type,
-                entity: "source"
-            }
-        });
-
-        edges.push({
-            data: {
-                source: srcId,
-                target: target
-            }
-        });
-    }
-
-    return { nodes, edges };
+function ensureNode(nodeMap, id, entity) {
+  let node = nodeMap.get(id);
+  if (!node) {
+    node = {
+      id,
+      label: id,
+      entity,       // "model" or "source"
+      columns: {},  // will be filled with real / inferred columns
+    };
+    nodeMap.set(id, node);
+  }
+  return node;
 }
 
 
@@ -98,137 +70,256 @@ function convertToCytoscape(model) {
 // MAIN EXECUTION
 // ---------------------------------------------------------------------------
 (async () => {
-    console.log("Loading JSON files…");
+  console.log("Loading JSON files…");
 
-    const files = await listJsonFiles();
-    console.log("Files found:", files);
+  const files = await listJsonFiles();
+  console.log("Files found:", files);
 
-    let allElements = [];
+  const models = [];
+  for (const file of files) {
+    const modelJson = await fetchJson(file);
+    models.push(modelJson);
+  }
 
-    for (const file of files) {
-        const modelJson = await fetchJson(file);
-        const { nodes, edges } = convertToCytoscape(modelJson);
-        allElements.push(...nodes, ...edges);
+  // Node registry and edge list
+  const nodeMap = new Map();   // id -> { id, label, entity, fullModel?, columns }
+  const edges = [];            // { source, target }
+
+  // For inferring source columns from lineage
+  const sourceColumnIndex = {}; // tableId -> colName -> { usedBy: [{ model, column }] }
+
+  // ---------------------------------------------------------
+  // PASS 1: REGISTER MODEL NODES + THEIR COLUMNS
+  // ---------------------------------------------------------
+  for (const model of models) {
+    const targetId = getModelId(model);
+    if (!targetId) {
+      console.warn("❗ Model has no usable identifier:", model);
+      continue;
     }
 
-    console.log("Elements prepared:", allElements.length);
+    // Ensure a model node
+    const modelNode = ensureNode(nodeMap, targetId, "model");
+    modelNode.label = targetId;
+    modelNode.fullModel = model;
 
-    // ----------------------------------------------------------------------
-    // CYTOSCAPE INITIALISATION
-    // ----------------------------------------------------------------------
-    const cy = cytoscape({
-        container: document.getElementById("cy"),
-        elements: allElements,
+    // Attach model's own columns, if present
+    if (model.columns) {
+      modelNode.columns = model.columns;
 
-        layout: {
-            name: "cose",
-            padding: 50
+      // For each column, inspect sources to infer source-table columns
+      for (const [colName, meta] of Object.entries(model.columns)) {
+        const allSourceRefs = [];
+
+        // source may be string or array
+        if (Array.isArray(meta.source)) {
+          allSourceRefs.push(...meta.source);
+        } else if (meta.source) {
+          allSourceRefs.push(meta.source);
+        }
+
+        // also support "derived_from" if present
+        if (Array.isArray(meta.derived_from)) {
+          allSourceRefs.push(...meta.derived_from);
+        } else if (meta.derived_from) {
+          allSourceRefs.push(meta.derived_from);
+        }
+
+        for (const ref of allSourceRefs) {
+          if (typeof ref !== "string") continue;
+
+          const parts = ref.split(".");
+          if (parts.length < 2) continue;
+
+          const srcTableId = parts.slice(0, -1).join(".");
+          const srcColName = parts[parts.length - 1];
+
+          if (!sourceColumnIndex[srcTableId]) {
+            sourceColumnIndex[srcTableId] = {};
+          }
+          if (!sourceColumnIndex[srcTableId][srcColName]) {
+            sourceColumnIndex[srcTableId][srcColName] = { usedBy: [] };
+          }
+
+          sourceColumnIndex[srcTableId][srcColName].usedBy.push({
+            model: targetId,
+            column: colName,
+          });
+        }
+      }
+    }
+
+    // -------------------------------------------------------
+    // PASS 1b: REGISTER SOURCE NODES + EDGES FOR THIS MODEL
+    // -------------------------------------------------------
+    for (const src of model.sources || []) {
+      const srcKey = src.table || src.model || "unknown_source";
+      const srcId = `${src.name}.${srcKey}`;
+
+      const srcNode = ensureNode(nodeMap, srcId, "source");
+      srcNode.label = srcId;
+
+      edges.push({ source: srcId, target: targetId });
+    }
+  }
+
+  // ---------------------------------------------------------
+  // PASS 2: APPLY INFERRED COLUMNS TO SOURCE NODES
+  // ---------------------------------------------------------
+  for (const [tableId, cols] of Object.entries(sourceColumnIndex)) {
+    const srcNode = ensureNode(nodeMap, tableId, "source");
+    if (!srcNode.columns) srcNode.columns = {};
+
+    for (const [colName, info] of Object.entries(cols)) {
+      if (!srcNode.columns[colName]) {
+        srcNode.columns[colName] = {};
+      }
+      // attach "usedBy" info so we know downstream usage
+      srcNode.columns[colName].usedBy = info.usedBy;
+    }
+  }
+
+  // ---------------------------------------------------------
+  // BUILD CYTOSCAPE ELEMENTS
+  // ---------------------------------------------------------
+  const allElements = [];
+
+  // Nodes
+  for (const node of nodeMap.values()) {
+    allElements.push({ data: node });
+  }
+
+  // Edges
+  for (const e of edges) {
+    allElements.push({ data: { source: e.source, target: e.target } });
+  }
+
+  console.log("Elements prepared:", allElements.length);
+
+  // ----------------------------------------------------------------------
+  // CYTOSCAPE INITIALISATION
+  // ----------------------------------------------------------------------
+  const cy = cytoscape({
+    container: document.getElementById("cy"),
+    elements: allElements,
+
+    layout: {
+      name: "cose",
+      padding: 50,
+    },
+
+    style: [
+      // MODEL NODES (targets)
+      {
+        selector: 'node[entity="model"]',
+        style: {
+          "background-color": "#6cca98",
+          "border-width": 3,
+          "border-color": "#003057",
+          "label": "data(label)",
+          "font-size": 10,
+          "text-valign": "center",
+          "text-halign": "center",
         },
+      },
 
-        style: [
-            // MODEL NODES
-            {
-                selector: 'node[entity="model"]',
-                style: {
-                    "background-color": "#6cca98",
-                    "border-width": 3,
-                    "border-color": "#003057",
-                    "label": "data(label)",
-                    "font-size": 10,
-                    "text-valign": "center",
-                    "text-halign": "center"
-                }
-            },
+      // SOURCE NODES (inferred columns)
+      {
+        selector: 'node[entity="source"]',
+        style: {
+          "background-color": "#003057",
+          "color": "#f0f4ff",     // softer light text
+          "label": "data(label)",
+          "font-size": 9,
+          "text-valign": "center",
+          "text-halign": "center",
+        },
+      },
 
-            // SOURCE / REF NODES
-            {
-                selector: 'node[entity="source"]',
-                style: {
-                    "background-color": "#003057",
-                    "color": "#ffffff",
-                    "label": "data(label)",
-                    "font-size": 9,
-                    "text-valign": "center",
-                    "text-halign": "center"
-                }
-            },
+      // EDGES
+      {
+        selector: "edge",
+        style: {
+          "width": 2,
+          "line-color": "#777",
+          "target-arrow-color": "#777",
+          "target-arrow-shape": "triangle",
+        },
+      },
+    ],
+  });
 
-            // EDGES
-            {
-                selector: "edge",
-                style: {
-                    "width": 2,
-                    "line-color": "#777",
-                    "target-arrow-color": "#777",
-                    "target-arrow-shape": "triangle"
-                }
-            }
-        ]
-    });
-
-    console.log("Cytoscape initialised.");
+  console.log("Cytoscape initialised.");
 
 
-    // ----------------------------------------------------------------------
-    // NODE CLICK HANDLER — SHOW COLUMN LINEAGE ONLY FOR MODEL NODES
-    // ----------------------------------------------------------------------
-    cy.on("tap", "node", evt => {
-        const node = evt.target;
+  // ----------------------------------------------------------------------
+  // NODE CLICK HANDLER — SHOW COLUMN LINEAGE FOR ANY NODE
+  // ----------------------------------------------------------------------
+  cy.on("tap", "node", (evt) => {
+    const node = evt.target;
+    const data = node.data();
+    const columns = data.columns || null;
 
-        // NOT A MODEL → close panel
-        if (node.data("entity") !== "model") {
-            document.getElementById("info-panel").style.display = "none";
-            return;
+    const panel = document.getElementById("info-panel");
+    const title = document.getElementById("panel-title");
+    const content = document.getElementById("panel-content");
+
+    if (!columns || Object.keys(columns).length === 0) {
+      panel.style.display = "none";
+      return;
+    }
+
+    title.innerText = data.id;
+    let html = "";
+
+    for (const [colName, meta] of Object.entries(columns)) {
+      html += `<div style="margin-bottom: 12px;">
+        <strong>${colName}</strong><br>`;
+
+      // For models: show source lineage + transform
+      if (data.entity === "model") {
+        html += `<em>Sources:</em><br>`;
+
+        const srcs = [];
+        if (Array.isArray(meta.source)) {
+          srcs.push(...meta.source);
+        } else if (meta.source) {
+          srcs.push(meta.source);
+        }
+        if (Array.isArray(meta.derived_from)) {
+          srcs.push(...meta.derived_from);
+        } else if (meta.derived_from) {
+          srcs.push(meta.derived_from);
         }
 
-        const model = node.data("fullModel");
-        if (!model) {
-            console.warn("No fullModel for node:", node.id());
-            return;
+        if (srcs.length) {
+          html += srcs.map((s) => `- ${s}`).join("<br>");
+        } else {
+          html += `<span style="color:#888">(none)</span>`;
         }
 
-        const columns = model.columns;
-        if (!columns || Object.keys(columns).length === 0) {
-            console.warn("Model has no columns:", model);
-            document.getElementById("info-panel").style.display = "none";
-            return;
+        if (meta.transform || meta.transformation) {
+          html += `<br><em>Transform:</em><br>${meta.transform || meta.transformation}`;
         }
+      }
 
-        // SHOW PANEL
-        const panel = document.getElementById("info-panel");
-        const title = document.getElementById("panel-title");
-        const content = document.getElementById("panel-content");
-
-        title.innerText = model.target_table || model.model_name;
-
-        let html = "";
-        for (const [col, meta] of Object.entries(columns)) {
-            html += `<div style="margin-bottom: 12px;">
-                <strong>${col}</strong><br>
-                <em>Sources:</em><br>`;
-
-            // Accepts "source", "derived_from", etc
-            const sources =
-                (Array.isArray(meta.source) && meta.source) ||
-                (meta.source ? [meta.source] : null) ||
-                meta.derived_from ||
-                [];
-
-            if (sources.length) {
-                html += sources.map(s => `- ${s}`).join("<br>");
-            } else {
-                html += `<span style="color:#888">(none)</span>`;
-            }
-
-            if (meta.transform || meta.transformation) {
-                html += `<br><em>Transformation:</em><br>${meta.transform || meta.transformation}`;
-            }
-
-            html += `<hr></div>`;
+      // For sources: show which model/columns consume them
+      if (data.entity === "source") {
+        const usedBy = meta.usedBy || [];
+        html += `<em>Used by:</em><br>`;
+        if (usedBy.length) {
+          html += usedBy
+            .map((u) => `- ${u.model}.${u.column}`)
+            .join("<br>");
+        } else {
+          html += `<span style="color:#888">(not referenced yet)</span>`;
         }
+      }
 
-        content.innerHTML = html;
-        panel.style.display = "block";
-    });
+      html += `<hr></div>`;
+    }
 
+    content.innerHTML = html;
+    panel.style.display = "block";
+  });
 })();
