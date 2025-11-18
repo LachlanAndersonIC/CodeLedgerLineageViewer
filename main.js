@@ -2,38 +2,9 @@
 // Example:
 // const containerUrl = "https://aicodeledgerlineage.blob.core.windows.net/lineage?sv=xxxx&sig=xxxx";
 const containerUrl = "https://aicodeledgerlineage.blob.core.windows.net/lineage?sp=rl&st=2025-11-18T01:29:42Z&se=2026-11-18T09:44:42Z&spr=https&sv=2024-11-04&sr=c&sig=X8%2BwAKmeKXetzbfcVWDcpTaipOiahwXZzfaEJ2Qh8%2BE%3D";
-const prefix = "local_repo/models/";
-
-
-// ---------------------------------------------------------------------------
-// LIST JSON FILES IN BLOB STORAGE
-// ---------------------------------------------------------------------------
-async function listJsonFiles() {
-  const listUrl = `${containerUrl}&restype=container&comp=list&prefix=${prefix}`;
-  console.log("Listing URL:", listUrl);
-
-  const res = await fetch(listUrl);
-  const xmlText = await res.text();
-  const xml = new DOMParser().parseFromString(xmlText, "application/xml");
-
-  const blobs = [...xml.getElementsByTagName("Blob")];
-
-  return blobs
-    .map((b) => b.getElementsByTagName("Name")[0].textContent)
-    .filter((name) => name.endsWith(".json"));
-}
-
-
-// ---------------------------------------------------------------------------
-// FETCH INDIVIDUAL JSON FILE
-// ---------------------------------------------------------------------------
-async function fetchJson(name) {
-  const blobBase = containerUrl.split("?")[0];
+?")[0];
   const sas = "?" + containerUrl.split("?")[1];
-
   const url = `${blobBase}/${name}${sas}`;
-  console.log("Fetching:", url);
-
   const res = await fetch(url);
   return res.json();
 }
@@ -43,7 +14,6 @@ async function fetchJson(name) {
 // HELPERS
 // ---------------------------------------------------------------------------
 function getModelId(model) {
-  // Stable ID for model nodes
   return (
     model.model_name ||
     model.target_table ||
@@ -57,8 +27,8 @@ function ensureNode(nodeMap, id, entity) {
     node = {
       id,
       label: id,
-      entity,       // "model" or "source"
-      columns: {},  // will be filled with real / inferred columns
+      entity,
+      _meta: { columns: {} }
     };
     nodeMap.set(id, node);
   }
@@ -67,149 +37,108 @@ function ensureNode(nodeMap, id, entity) {
 
 
 // ---------------------------------------------------------------------------
-// MAIN EXECUTION
+// MAIN
 // ---------------------------------------------------------------------------
 (async () => {
-  console.log("Loading JSON files…");
-
   const files = await listJsonFiles();
-  console.log("Files found:", files);
-
   const models = [];
-  for (const file of files) {
-    const modelJson = await fetchJson(file);
-    models.push(modelJson);
+
+  for (const f of files) {
+    models.push(await fetchJson(f));
   }
 
-  // Node registry and edge list
-  const nodeMap = new Map();   // id -> { id, label, entity, fullModel?, columns }
-  const edges = [];            // { source, target }
-
-  // For inferring source columns from lineage
-  const sourceColumnIndex = {}; // tableId -> colName -> { usedBy: [{ model, column }] }
+  const nodeMap = new Map();
+  const edges = [];
+  const sourceColumnIndex = {};
 
   // ---------------------------------------------------------
-  // PASS 1: REGISTER MODEL NODES + THEIR COLUMNS
+  // PASS 1: REGISTER MODELS + THEIR COLUMNS
   // ---------------------------------------------------------
   for (const model of models) {
     const targetId = getModelId(model);
-    if (!targetId) {
-      console.warn("❗ Model has no usable identifier:", model);
-      continue;
-    }
+    if (!targetId) continue;
 
-    // Ensure a model node
     const modelNode = ensureNode(nodeMap, targetId, "model");
-    modelNode.label = targetId;
-    modelNode.fullModel = model;
+    modelNode._meta.fullModel = model;
 
-    // Attach model's own columns, if present
     if (model.columns) {
-      modelNode.columns = model.columns;
+      modelNode._meta.columns = model.columns;
 
-      // For each column, inspect sources to infer source-table columns
-      for (const [colName, meta] of Object.entries(model.columns)) {
-        const allSourceRefs = [];
+      for (const [col, meta] of Object.entries(model.columns)) {
+        const refs = [];
 
-        // source may be string or array
-        if (Array.isArray(meta.source)) {
-          allSourceRefs.push(...meta.source);
-        } else if (meta.source) {
-          allSourceRefs.push(meta.source);
-        }
+        if (Array.isArray(meta.source)) refs.push(...meta.source);
+        else if (meta.source) refs.push(meta.source);
 
-        // also support "derived_from" if present
-        if (Array.isArray(meta.derived_from)) {
-          allSourceRefs.push(...meta.derived_from);
-        } else if (meta.derived_from) {
-          allSourceRefs.push(meta.derived_from);
-        }
+        if (Array.isArray(meta.derived_from)) refs.push(...meta.derived_from);
+        else if (meta.derived_from) refs.push(meta.derived_from);
 
-        for (const ref of allSourceRefs) {
-          if (typeof ref !== "string") continue;
+        for (const r of refs) {
+          const p = r.split(".");
+          const srcTable = p.slice(0, -1).join(".");
+          const srcCol = p[p.length - 1];
 
-          const parts = ref.split(".");
-          if (parts.length < 2) continue;
-
-          const srcTableId = parts.slice(0, -1).join(".");
-          const srcColName = parts[parts.length - 1];
-
-          if (!sourceColumnIndex[srcTableId]) {
-            sourceColumnIndex[srcTableId] = {};
+          if (!sourceColumnIndex[srcTable]) {
+            sourceColumnIndex[srcTable] = {};
           }
-          if (!sourceColumnIndex[srcTableId][srcColName]) {
-            sourceColumnIndex[srcTableId][srcColName] = { usedBy: [] };
+          if (!sourceColumnIndex[srcTable][srcCol]) {
+            sourceColumnIndex[srcTable][srcCol] = { usedBy: [] };
           }
 
-          sourceColumnIndex[srcTableId][srcColName].usedBy.push({
+          sourceColumnIndex[srcTable][srcCol].usedBy.push({
             model: targetId,
-            column: colName,
+            column: col
           });
         }
       }
     }
 
-    // -------------------------------------------------------
-    // PASS 1b: REGISTER SOURCE NODES + EDGES FOR THIS MODEL
-    // -------------------------------------------------------
+    // Register all sources
     for (const src of model.sources || []) {
       const srcKey = src.table || src.model || "unknown_source";
       const srcId = `${src.name}.${srcKey}`;
-
-      const srcNode = ensureNode(nodeMap, srcId, "source");
-      srcNode.label = srcId;
+      ensureNode(nodeMap, srcId, "source");
 
       edges.push({ source: srcId, target: targetId });
     }
   }
 
   // ---------------------------------------------------------
-  // PASS 2: APPLY INFERRED COLUMNS TO SOURCE NODES
+  // PASS 2: APPLY INFERRED SOURCE COLUMNS
   // ---------------------------------------------------------
-  for (const [tableId, cols] of Object.entries(sourceColumnIndex)) {
-    const srcNode = ensureNode(nodeMap, tableId, "source");
-    if (!srcNode.columns) srcNode.columns = {};
+  for (const [tblId, cols] of Object.entries(sourceColumnIndex)) {
+    const srcNode = ensureNode(nodeMap, tblId, "source");
 
-    for (const [colName, info] of Object.entries(cols)) {
-      if (!srcNode.columns[colName]) {
-        srcNode.columns[colName] = {};
+    for (const [col, info] of Object.entries(cols)) {
+      if (!srcNode._meta.columns[col]) {
+        srcNode._meta.columns[col] = {};
       }
-      // attach "usedBy" info so we know downstream usage
-      srcNode.columns[colName].usedBy = info.usedBy;
+      srcNode._meta.columns[col].usedBy = info.usedBy;
     }
   }
 
   // ---------------------------------------------------------
-  // BUILD CYTOSCAPE ELEMENTS
+  // BUILD CY ELEMENTS
   // ---------------------------------------------------------
-  const allElements = [];
+  const elements = [];
 
-  // Nodes
   for (const node of nodeMap.values()) {
-    allElements.push({ data: node });
+    elements.push({ data: node });
   }
 
-  // Edges
   for (const e of edges) {
-    allElements.push({ data: { source: e.source, target: e.target } });
+    elements.push({ data: { source: e.source, target: e.target } });
   }
 
-  console.log("Elements prepared:", allElements.length);
-
-  // ----------------------------------------------------------------------
-  // CYTOSCAPE INITIALISATION
-  // ----------------------------------------------------------------------
+  // ---------------------------------------------------------
+  // INIT CY
+  // ---------------------------------------------------------
   const cy = cytoscape({
     container: document.getElementById("cy"),
-    elements: allElements,
-
-    layout: {
-      name: "cose",
-      padding: 50,
-    },
+    elements,
+    layout: { name: "cose", padding: 50 },
 
     style: [
-      // MODEL NODES (targets)
       {
         selector: 'node[entity="model"]',
         style: {
@@ -217,105 +146,71 @@ function ensureNode(nodeMap, id, entity) {
           "border-width": 3,
           "border-color": "#003057",
           "label": "data(label)",
-          "font-size": 10,
-          "text-valign": "center",
-          "text-halign": "center",
-        },
+          "font-size": 10
+        }
       },
-
-      // SOURCE NODES (inferred columns)
       {
         selector: 'node[entity="source"]',
         style: {
           "background-color": "#003057",
-          "color": "#f0f4ff",     // softer light text
+          "color": "#e6efff",
           "label": "data(label)",
-          "font-size": 9,
-          "text-valign": "center",
-          "text-halign": "center",
-        },
+          "font-size": 9
+        }
       },
-
-      // EDGES
       {
         selector: "edge",
         style: {
           "width": 2,
           "line-color": "#777",
           "target-arrow-color": "#777",
-          "target-arrow-shape": "triangle",
-        },
-      },
-    ],
+          "target-arrow-shape": "triangle"
+        }
+      }
+    ]
   });
 
   window.cy = cy;
 
-  console.log("Cytoscape initialised.");
-
-
-  // ----------------------------------------------------------------------
-  // NODE CLICK HANDLER — SHOW COLUMN LINEAGE FOR ANY NODE
-  // ----------------------------------------------------------------------
+  // ---------------------------------------------------------
+  // CLICK HANDLER — ANY NODE CAN SHOW COLUMNS NOW
+  // ---------------------------------------------------------
   cy.on("tap", "node", (evt) => {
-    const node = evt.target;
-    const data = node.data();
-    const columns = data.columns || null;
+    const n = evt.target;
+    const meta = n.data("_meta");
+
+    if (!meta || !meta.columns || !Object.keys(meta.columns).length) {
+      document.getElementById("info-panel").style.display = "none";
+      return;
+    }
 
     const panel = document.getElementById("info-panel");
     const title = document.getElementById("panel-title");
     const content = document.getElementById("panel-content");
 
-    if (!columns || Object.keys(columns).length === 0) {
-      panel.style.display = "none";
-      return;
-    }
+    title.innerText = n.id();
 
-    title.innerText = data.id;
     let html = "";
-
-    for (const [colName, meta] of Object.entries(columns)) {
+    for (const [col, details] of Object.entries(meta.columns)) {
       html += `<div style="margin-bottom: 12px;">
-        <strong>${colName}</strong><br>`;
+        <strong>${col}</strong><br>`;
 
-      // For models: show source lineage + transform
-      if (data.entity === "model") {
-        html += `<em>Sources:</em><br>`;
-
-        const srcs = [];
-        if (Array.isArray(meta.source)) {
-          srcs.push(...meta.source);
-        } else if (meta.source) {
-          srcs.push(meta.source);
-        }
-        if (Array.isArray(meta.derived_from)) {
-          srcs.push(...meta.derived_from);
-        } else if (meta.derived_from) {
-          srcs.push(meta.derived_from);
-        }
-
-        if (srcs.length) {
-          html += srcs.map((s) => `- ${s}`).join("<br>");
-        } else {
-          html += `<span style="color:#888">(none)</span>`;
-        }
-
-        if (meta.transform || meta.transformation) {
-          html += `<br><em>Transform:</em><br>${meta.transform || meta.transformation}`;
-        }
+      if (details.usedBy) {
+        html += `<em>Used By:</em><br>`;
+        html += details.usedBy.map(u => `- ${u.model}.${u.column}`).join("<br>");
       }
 
-      // For sources: show which model/columns consume them
-      if (data.entity === "source") {
-        const usedBy = meta.usedBy || [];
-        html += `<em>Used by:</em><br>`;
-        if (usedBy.length) {
-          html += usedBy
-            .map((u) => `- ${u.model}.${u.column}`)
-            .join("<br>");
-        } else {
-          html += `<span style="color:#888">(not referenced yet)</span>`;
-        }
+      if (details.source || details.derived_from || details.transform || details.transformation) {
+        html += `<em>Lineage:</em><br>`;
+        const s = [];
+
+        if (Array.isArray(details.source)) s.push(...details.source);
+        else if (details.source) s.push(details.source);
+
+        if (Array.isArray(details.derived_from)) s.push(...details.derived_from);
+        else if (details.derived_from) s.push(details.derived_from);
+
+        html += s.map(x => `- ${x}`).join("<br>");
       }
 
       html += `<hr></div>`;
