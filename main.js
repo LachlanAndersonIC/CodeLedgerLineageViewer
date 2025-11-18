@@ -249,6 +249,8 @@ function ensureNode(nodeMap, id, entity) {
     ],
   });
 
+  window.cy = cy;
+
   console.log("Cytoscape initialised.");
 
 
