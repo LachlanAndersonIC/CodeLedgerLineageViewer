@@ -94,9 +94,23 @@ function ensureNode(nodeMap, id, entity) {
     }
 
     for (const src of model.sources || []) {
-      const srcKey = src.table || src.model || "unknown_source";
-      const srcId = `${src.name}.${srcKey}`;
-      ensureNode(nodeMap, srcId, "source");
+      let srcId;
+    
+      // For dbt ref() sources, prefer the model name only (e.g. "dim_date")
+      if (src.type === "ref" && src.model) {
+        srcId = src.model; // "dim_date"
+      } else if (src.schema && src.table) {
+        // If we have schema+table, use that (e.g. "poc_source.program_enrolment")
+        srcId = `${src.schema}.${src.table}`;
+      } else {
+        // Fallback: name + table/model
+        const srcKey = src.table || src.model || "unknown_source";
+        srcId = `${src.name}.${srcKey}`;
+      }
+    
+      const srcNode = ensureNode(nodeMap, srcId, "source");
+      srcNode.label = srcId;
+    
       edges.push({ source: srcId, target: targetId });
     }
   }
@@ -108,6 +122,24 @@ function ensureNode(nodeMap, id, entity) {
     for (const [colName, info] of Object.entries(cols)) {
       srcNode.columns[colName] ??= {};
       srcNode.columns[colName].usedBy = info.usedBy;
+    }
+  }
+
+  // Simple edge de-duplication
+  const edgeSet = new Set(edges.map(e => `${e.source}-->${e.target}`));
+  
+  // After you fill srcNode.columns[colName].usedBy:
+  for (const [colName, info] of Object.entries(cols)) {
+    srcNode.columns[colName] ??= {};
+    srcNode.columns[colName].usedBy = info.usedBy;
+  
+    // Create edges from this source table to each model that uses it
+    for (const u of info.usedBy) {
+      const key = `${tbl}-->${u.model}`;
+      if (!edgeSet.has(key)) {
+        edgeSet.add(key);
+        edges.push({ source: tbl, target: u.model });
+      }
     }
   }
 
