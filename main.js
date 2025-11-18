@@ -260,6 +260,18 @@ function ensureNode(nodeMap, id, entity) {
     ],
   });
 
+  cy.nodes().forEach(ele => {
+    const id = ele.data('id');
+    const original = nodeMap.get(id);  // <-- your original node with columns/meta
+  
+    if (original) {
+      ele.scratch('columns', original.columns);
+      ele.scratch('fullModel', original.fullModel);
+    }
+  
+    console.log("Scratch attached to:", id, ele.scratch('columns'));
+  });
+
   window.cy = cy;
   // ----------------------------------------------------------------------
   // DEBUG: VERIFY NODE CLICKS
