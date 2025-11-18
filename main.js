@@ -4,6 +4,7 @@
 const containerUrl = "https://aicodeledgerlineage.blob.core.windows.net/lineage?sp=rl&st=2025-11-18T01:29:42Z&se=2026-11-18T09:44:42Z&spr=https&sv=2024-11-04&sr=c&sig=X8%2BwAKmeKXetzbfcVWDcpTaipOiahwXZzfaEJ2Qh8%2BE%3D";
 const prefix = "local_repo/models/";
 
+window.cy = null;
 
 // ---------------------------------------------------------------------------
 // LIST JSON FILES
@@ -194,6 +195,7 @@ function ensureNode(nodeMap, id, entity) {
   });
 
   window.cy = cy;
+  console.log("Cytoscape instance exposed globally");
 
   // ---------------------------------------------------------
   // CLICK HANDLER — ANY NODE CAN SHOW COLUMNS NOW
