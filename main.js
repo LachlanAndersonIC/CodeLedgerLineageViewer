@@ -4,10 +4,15 @@
 const containerUrl = "https://aicodeledgerlineage.blob.core.windows.net/lineage?sp=rl&st=2025-11-18T01:29:42Z&se=2026-11-18T09:44:42Z&spr=https&sv=2024-11-04&sr=c&sig=X8%2BwAKmeKXetzbfcVWDcpTaipOiahwXZzfaEJ2Qh8%2BE%3D";
 const prefix = "local_repo/models/";
 
+// -------------------------------------------------------
+// FETCH FUNCTIONS
+// -------------------------------------------------------
+
 async function listJsonFiles() {
   const listUrl = `${containerUrl}&restype=container&comp=list&prefix=${prefix}`;
   const res = await fetch(listUrl);
   const xml = new DOMParser().parseFromString(await res.text(), "application/xml");
+
   return [...xml.getElementsByTagName("Blob")]
     .map((b) => b.getElementsByTagName("Name")[0].textContent)
     .filter((name) => name.endsWith(".json"));
@@ -20,11 +25,15 @@ async function fetchJson(name) {
   return res.json();
 }
 
+// -------------------------------------------------------
+// MODEL HELPERS
+// -------------------------------------------------------
+
 function getModelId(model) {
   return (
-    model.model_name ||
-    model.target_table ||
-    (model.file_name ? model.file_name.replace(".sql", "") : null)
+    (model.model_name && model.model_name.trim()) ||
+    (model.target_table && model.target_table.trim()) ||
+    (model.file_name ? model.file_name.replace(".sql", "").trim() : null)
   );
 }
 
@@ -43,6 +52,10 @@ function ensureNode(nodeMap, id, entity) {
   return node;
 }
 
+// -------------------------------------------------------
+// MAIN EXECUTION START
+// -------------------------------------------------------
+
 (async () => {
   const files = await listJsonFiles();
   const models = [];
@@ -54,13 +67,14 @@ function ensureNode(nodeMap, id, entity) {
   const edges = [];
   const sourceColumnIndex = {};
 
-  // Pass 1 — construct nodes & collect model columns
+  // -------------------------------------------------------
+  // PASS 1 — BUILD MODEL NODES + COL COLUMN REFERENCES
+  // -------------------------------------------------------
   for (const model of models) {
     const targetId = getModelId(model);
     if (!targetId) continue;
 
     const modelNode = ensureNode(nodeMap, targetId, "model");
-    modelNode.label = targetId;
     modelNode.fullModel = model;
 
     if (model.columns) {
@@ -93,10 +107,11 @@ function ensureNode(nodeMap, id, entity) {
       }
     }
 
-    // NEW SOURCE HANDLING
+    // -------------------------------------------------------
+    // NEW SOURCE/REF LOGIC — FIXED
+    // -------------------------------------------------------
     for (const src of model.sources || []) {
-
-      // CASE 1: dbt ref → references another model
+      // REF → MODEL → MODEL
       if (src.type === "ref" && src.model) {
         const refModel = src.model.trim();
         ensureNode(nodeMap, refModel, "model");
@@ -104,7 +119,7 @@ function ensureNode(nodeMap, id, entity) {
         continue;
       }
 
-      // CASE 2: dbt_source → actual source table
+      // dbt_source → SOURCE → MODEL
       if (src.type === "dbt_source" && src.table) {
         const srcId = `${src.name}.${src.table}`;
         ensureNode(nodeMap, srcId, "source");
@@ -112,12 +127,13 @@ function ensureNode(nodeMap, id, entity) {
         continue;
       }
 
-      // CASE 3: fallback — log unexpected entries
       console.warn("Unknown source type:", src);
     }
   }
 
-  // Pass 2 — apply inferred columns to sources
+  // -------------------------------------------------------
+  // PASS 2 — APPLY INFERRED SOURCE COLUMN USAGE
+  // -------------------------------------------------------
   for (const [tbl, cols] of Object.entries(sourceColumnIndex)) {
     const srcNode = ensureNode(nodeMap, tbl, "source");
     srcNode.columns ??= {};
@@ -127,8 +143,11 @@ function ensureNode(nodeMap, id, entity) {
     }
   }
 
-  // Build Cytoscape elements
+  // -------------------------------------------------------
+  // BUILD CYTOSCAPE ELEMENTS
+  // -------------------------------------------------------
   const allElements = [];
+
   for (const node of nodeMap.values()) {
     allElements.push({
       data: {
@@ -145,9 +164,14 @@ function ensureNode(nodeMap, id, entity) {
   }
 
   for (const e of edges) {
-    allElements.push({ data: { source: e.source, target: e.target } });
+    allElements.push({
+      data: { source: e.source, target: e.target },
+    });
   }
 
+  // -------------------------------------------------------
+  // INITIALIZE CYTOSCAPE
+  // -------------------------------------------------------
   const cy = cytoscape({
     container: document.getElementById("cy"),
     elements: allElements,
@@ -198,7 +222,9 @@ function ensureNode(nodeMap, id, entity) {
 
   window.cy = cy;
 
-  // Ensure scratch is attached (Cytoscape ignores scratch in JSON init)
+  // -------------------------------------------------------
+  // ATTACH SCRATCH AFTER INIT
+  // -------------------------------------------------------
   cy.nodes().forEach((ele) => {
     const id = ele.data("id");
     const original = nodeMap.get(id);
@@ -208,7 +234,9 @@ function ensureNode(nodeMap, id, entity) {
     }
   });
 
-  // Click handler
+  // -------------------------------------------------------
+  // CLICK HANDLER — PANEL POPUP
+  // -------------------------------------------------------
   cy.on("tap", "node", (evt) => {
     const node = evt.target;
     const data = node.data();
@@ -235,8 +263,10 @@ function ensureNode(nodeMap, id, entity) {
         html += `<em>Sources:</em><br>`;
         const srcs = [];
 
-        if (meta.source) srcs.push(...(Array.isArray(meta.source) ? meta.source : [meta.source]));
-        if (meta.derived_from) srcs.push(...(Array.isArray(meta.derived_from) ? meta.derived_from : [meta.derived_from]));
+        if (meta.source)
+          srcs.push(...(Array.isArray(meta.source) ? meta.source : [meta.source]));
+        if (meta.derived_from)
+          srcs.push(...(Array.isArray(meta.derived_from) ? meta.derived_from : [meta.derived_from]));
 
         html += srcs.length
           ? srcs.map((s) => `- ${s}`).join("<br>")
@@ -260,4 +290,5 @@ function ensureNode(nodeMap, id, entity) {
 
     content.innerHTML = html;
   });
+
 })();
