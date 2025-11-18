@@ -186,7 +186,18 @@ function ensureNode(nodeMap, id, entity) {
 
   // Nodes
   for (const node of nodeMap.values()) {
-    allElements.push({ data: node });
+    allElements.push({
+      data: {
+        id: node.id,
+        label: node.label,
+        entity: node.entity,
+        hasColumns: Object.keys(node.columns).length > 0
+      },
+      scratch: {
+        columns: node.columns,     // <-- SAFE STORAGE
+        fullModel: node.fullModel  // optional
+      }
+    });
   }
 
   // Edges
