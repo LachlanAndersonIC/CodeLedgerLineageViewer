@@ -33,22 +33,66 @@ async function fetchJson(name) {
 }
 
 function convertToCytoscape(model) {
-    let target = model.target_table || model.file_name || "unknown_target";
-    const nodes = [];
-    const edges = [];
+    const target = model.target_table || model.file_name || "unknown_target";
 
-    nodes.push({ data: { id: target, type: model.target_type } });
+    return {
+        target,
+        nodes: [{ data: { id: target, type: model.target_type, fullModel: model }}],
+        edges: model.sources.map(src => {
+            const srcKey = src.table || src.model;
+            const id = `${src.name}.${srcKey}`;
+            return {
+                sourceNode: { data: { id: id, type: src.type }},
+                edge: { data: { source: id, target: target }}
+            };
+        })
+    };
+}
 
-    for (const src of model.sources) {
-        const srcName = src.table || src.model;
-        const id = `${src.name}.${srcName}`;
+// Add click handler after cytoscape() call:
 
-        nodes.push({ data: { id: id, type: src.type } });
-        edges.push({ data: { source: id, target: target } });
+cy.on('tap', 'node', evt => {
+    const node = evt.target;
+    const model = node.data('fullModel');
+
+    if (!model || !model.columns) {
+        document.getElementById("info-panel").style.display = "none";
+        return;
     }
 
-    return { nodes, edges };
-}
+    const panel = document.getElementById("info-panel");
+    const title = document.getElementById("panel-title");
+    const content = document.getElementById("panel-content");
+
+    title.innerText = model.target_table || node.id();
+
+    let html = "";
+
+    for (const [col, meta] of Object.entries(model.columns)) {
+        html += `<div style="margin-bottom: 10px;">
+            <strong>${col}</strong><br>
+            <em>Sources:</em><br>`;
+
+        if (meta.source) {
+            if (Array.isArray(meta.source)) {
+                html += meta.source.map(s => `- ${s}`).join("<br>");
+            } else {
+                html += `- ${meta.source}`;
+            }
+        } else {
+            html += `<span style="color:#888;">(none)</span>`;
+        }
+
+        if (meta.transformation) {
+            html += `<br><em>Transformation:</em><br>${meta.transformation}`;
+        }
+
+        html += `<hr></div>`;
+    }
+
+    content.innerHTML = html;
+    panel.style.display = "block";
+});
 
 (async () => {
     const files = await listJsonFiles();
