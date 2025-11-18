@@ -6,201 +6,229 @@ const prefix = "local_repo/models/";
 
 
 // ---------------------------------------------------------------------------
-// LIST JSON FILES
+// LIST JSON FILES IN BLOB STORAGE
 // ---------------------------------------------------------------------------
 async function listJsonFiles() {
-  const listUrl = `${containerUrl}&restype=container&comp=list&prefix=${prefix}`;
-  const res = await fetch(listUrl);
-  const xmlText = await res.text();
-  const xml = new DOMParser().parseFromString(xmlText, "application/xml");
+    const listUrl = `${containerUrl}&restype=container&comp=list&prefix=${prefix}`;
+    console.log("Listing URL:", listUrl);
 
-  const blobs = [...xml.getElementsByTagName("Blob")];
-  return blobs
-    .map((b) => b.getElementsByTagName("Name")[0].textContent)
-    .filter((n) => n.endsWith(".json"));
+    const res = await fetch(listUrl);
+    const xmlText = await res.text();
+    const xml = new DOMParser().parseFromString(xmlText, "application/xml");
+
+    const blobs = [...xml.getElementsByTagName("Blob")];
+
+    return blobs
+        .map(b => b.getElementsByTagName("Name")[0].textContent)
+        .filter(name => name.endsWith(".json"));
 }
 
 
 // ---------------------------------------------------------------------------
-// FETCH JSON
+// FETCH INDIVIDUAL JSON FILE
 // ---------------------------------------------------------------------------
 async function fetchJson(name) {
-  const blobBase = containerUrl.split("?")[0];
-  const sas = "?" + containerUrl.split("?")[1];
-  const url = `${blobBase}/${name}${sas}`;
-  const res = await fetch(url);
-  return res.json();
+    const blobBase = containerUrl.split("?")[0];
+    const sas = "?" + containerUrl.split("?")[1];
+
+    const url = `${blobBase}/${name}${sas}`;
+    console.log("Fetching:", url);
+
+    const res = await fetch(url);
+    return res.json();
 }
 
 
 // ---------------------------------------------------------------------------
-// CONVERT JSON MODEL TO CYTOSCAPE ELEMENTS
+// CONVERT ONE MODEL JSON → Cytoscape Nodes + Edges
 // ---------------------------------------------------------------------------
 function convertToCytoscape(model) {
+    // Determine the model ID (unique identifier)
+    const target =
+        model.model_name ||
+        model.target_table ||
+        (model.file_name ? model.file_name.replace(".sql", "") : null);
 
-  // ALWAYS use model_name as model node ID (stable, correct, non-null)
-  const target = model.model_name;
-
-  if (!target) {
-    console.warn("Missing model_name:", model);
-    return { nodes: [], edges: [] };
-  }
-
-  let nodes = [];
-  let edges = [];
-
-  // MODEL NODE
-  nodes.push({
-    data: {
-      id: target,
-      label: target,
-      entity: "model",
-      fullModel: model
+    if (!target) {
+        console.warn("❗ Model has no usable identifier:", model);
+        return { nodes: [], edges: [] };
     }
-  });
 
-  // SOURCE / REF NODES
-  for (const src of model.sources || []) {
-    const srcKey = src.table || src.model || "unknown_source";
-    const srcId = `${src.name}.${srcKey}`;
+    let nodes = [];
+    let edges = [];
 
+    // MODEL NODE (green)
     nodes.push({
-      data: {
-        id: srcId,
-        label: srcId,
-        entity: "source"
-      }
+        data: {
+            id: target,
+            label: target,
+            type: "model",
+            entity: "model",
+            fullModel: model
+        }
     });
 
-    edges.push({
-      data: {
-        source: srcId,
-        target: target
-      }
-    });
-  }
+    // SOURCE / REF NODES (blue)
+    for (const src of model.sources || []) {
+        const srcKey = src.table || src.model || "unknown_source";
+        const srcId = `${src.name}.${srcKey}`;
 
-  return { nodes, edges };
+        nodes.push({
+            data: {
+                id: srcId,
+                label: srcId,
+                type: src.type,
+                entity: "source"
+            }
+        });
+
+        edges.push({
+            data: {
+                source: srcId,
+                target: target
+            }
+        });
+    }
+
+    return { nodes, edges };
 }
 
 
 // ---------------------------------------------------------------------------
-// MAIN
+// MAIN EXECUTION
 // ---------------------------------------------------------------------------
 (async () => {
-  const files = await listJsonFiles();
+    console.log("Loading JSON files…");
 
-  let elements = [];
+    const files = await listJsonFiles();
+    console.log("Files found:", files);
 
-  for (const file of files) {
-    const modelJson = await fetchJson(file);
-    const { nodes, edges } = convertToCytoscape(modelJson);
-    elements.push(...nodes, ...edges);
-  }
+    let allElements = [];
 
-  // -------------------------------------------------------
-  // INITIALIZE CYTOSCAPE WITH DAG LAYOUT
-  // -------------------------------------------------------
-  const cy = cytoscape({
-    container: document.getElementById("cy"),
-    elements,
-
-    layout: {
-      name: "breadthfirst",   // more readable than cose
-      directed: true,
-      roots: elements.filter(e => e.data?.entity === "model").map(e => e.data.id),
-      padding: 50,
-      spacingFactor: 1.2
-    },
-
-    style: [
-      // MODEL NODES = green
-      {
-        selector: 'node[entity="model"]',
-        style: {
-          "background-color": "#6cca98",
-          "border-color": "#003057",
-          "border-width": 3,
-          "font-size": "12px",
-          "label": "data(label)",
-          "text-valign": "center",
-          "text-halign": "center",
-          "width": 50,
-          "height": 50
-        }
-      },
-      // SOURCE NODES = blue
-      {
-        selector: 'node[entity="source"]',
-        style: {
-          "background-color": "#003057",
-          "color": "#ffffff",
-          "font-size": "10px",
-          "label": "data(label)",
-          "width": 35,
-          "height": 35
-        }
-      },
-      // edges
-      {
-        selector: "edge",
-        style: {
-          "width": 2,
-          "line-color": "#777",
-          "target-arrow-color": "#777",
-          "target-arrow-shape": "triangle"
-        }
-      }
-    ]
-  });
-
-  // -------------------------------------------------------
-  // NODE CLICK HANDLER (MODEL NODES ONLY)
-  // -------------------------------------------------------
-  cy.on("tap", "node", (evt) => {
-    const n = evt.target;
-
-    if (n.data("entity") !== "model") {
-      document.getElementById("info-panel").style.display = "none";
-      return;
+    for (const file of files) {
+        const modelJson = await fetchJson(file);
+        const { nodes, edges } = convertToCytoscape(modelJson);
+        allElements.push(...nodes, ...edges);
     }
 
-    const model = n.data("fullModel");
-    const cols = model.columns;
+    console.log("Elements prepared:", allElements.length);
 
-    if (!cols) {
-      document.getElementById("info-panel").style.display = "none";
-      return;
-    }
+    // ----------------------------------------------------------------------
+    // CYTOSCAPE INITIALISATION
+    // ----------------------------------------------------------------------
+    const cy = cytoscape({
+        container: document.getElementById("cy"),
+        elements: allElements,
 
-    const panel = document.getElementById("info-panel");
-    const title = document.getElementById("panel-title");
-    const content = document.getElementById("panel-content");
+        layout: {
+            name: "cose",
+            padding: 50
+        },
 
-    title.innerText = model.model_name;
+        style: [
+            // MODEL NODES
+            {
+                selector: 'node[entity="model"]',
+                style: {
+                    "background-color": "#6cca98",
+                    "border-width": 3,
+                    "border-color": "#003057",
+                    "label": "data(label)",
+                    "font-size": 10,
+                    "text-valign": "center",
+                    "text-halign": "center"
+                }
+            },
 
-    let html = "";
-    for (const [col, meta] of Object.entries(cols)) {
-      const srcs =
-        meta.source ||
-        meta.derived_from ||
-        [];
+            // SOURCE / REF NODES
+            {
+                selector: 'node[entity="source"]',
+                style: {
+                    "background-color": "#003057",
+                    "color": "#ffffff",
+                    "label": "data(label)",
+                    "font-size": 9,
+                    "text-valign": "center",
+                    "text-halign": "center"
+                }
+            },
 
-      html += `
-        <div>
-          <strong>${col}</strong><br>
-          <em>Sources:</em><br>
-          ${Array.isArray(srcs)
-            ? srcs.map(s => "- " + s).join("<br>")
-            : "- " + srcs}
-          <br>
-          ${meta.transform ? `<em>Transform:</em><br>${meta.transform}` : ""}
-          ${meta.transformation ? `<em>Transform:</em><br>${meta.transformation}` : ""}
-          <hr>
-        </div>`;
-    }
+            // EDGES
+            {
+                selector: "edge",
+                style: {
+                    "width": 2,
+                    "line-color": "#777",
+                    "target-arrow-color": "#777",
+                    "target-arrow-shape": "triangle"
+                }
+            }
+        ]
+    });
 
-    content.innerHTML = html;
-    panel.style.display = "block";
-  });
+    console.log("Cytoscape initialised.");
+
+
+    // ----------------------------------------------------------------------
+    // NODE CLICK HANDLER — SHOW COLUMN LINEAGE ONLY FOR MODEL NODES
+    // ----------------------------------------------------------------------
+    cy.on("tap", "node", evt => {
+        const node = evt.target;
+
+        // NOT A MODEL → close panel
+        if (node.data("entity") !== "model") {
+            document.getElementById("info-panel").style.display = "none";
+            return;
+        }
+
+        const model = node.data("fullModel");
+        if (!model) {
+            console.warn("No fullModel for node:", node.id());
+            return;
+        }
+
+        const columns = model.columns;
+        if (!columns || Object.keys(columns).length === 0) {
+            console.warn("Model has no columns:", model);
+            document.getElementById("info-panel").style.display = "none";
+            return;
+        }
+
+        // SHOW PANEL
+        const panel = document.getElementById("info-panel");
+        const title = document.getElementById("panel-title");
+        const content = document.getElementById("panel-content");
+
+        title.innerText = model.target_table || model.model_name;
+
+        let html = "";
+        for (const [col, meta] of Object.entries(columns)) {
+            html += `<div style="margin-bottom: 12px;">
+                <strong>${col}</strong><br>
+                <em>Sources:</em><br>`;
+
+            // Accepts "source", "derived_from", etc
+            const sources =
+                (Array.isArray(meta.source) && meta.source) ||
+                (meta.source ? [meta.source] : null) ||
+                meta.derived_from ||
+                [];
+
+            if (sources.length) {
+                html += sources.map(s => `- ${s}`).join("<br>");
+            } else {
+                html += `<span style="color:#888">(none)</span>`;
+            }
+
+            if (meta.transform || meta.transformation) {
+                html += `<br><em>Transformation:</em><br>${meta.transform || meta.transformation}`;
+            }
+
+            html += `<hr></div>`;
+        }
+
+        content.innerHTML = html;
+        panel.style.display = "block";
+    });
+
 })();
