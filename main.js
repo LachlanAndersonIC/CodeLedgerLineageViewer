@@ -220,6 +220,15 @@ function ensureNode(nodeMap, id, entity) {
     layout: {
       name: "cose",
       padding: 50,
+      avoidOverlap: true,
+      nodeOverlap: 30,
+      componentSpacing: 120,
+      nodeRepulsion: 80000,
+      idealEdgeLength: 150,
+      edgeElasticity: 0.1,
+      nestingFactor: 0.9,
+      gravity: 80,
+      numIter: 2500,
     },
     style: [
       {
