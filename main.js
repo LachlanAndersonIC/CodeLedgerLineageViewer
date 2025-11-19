@@ -1,6 +1,4 @@
 // SAS-enabled container URL
-// Example:
-// const containerUrl = "https://aicodeledgerlineage.blob.core.windows.net/lineage?sv=xxxx&sig=xxxx";
 const containerUrl = "https://aicodeledgerlineage.blob.core.windows.net/lineage?sp=rl&st=2025-11-18T01:29:42Z&se=2026-11-18T09:44:42Z&spr=https&sv=2024-11-04&sr=c&sig=X8%2BwAKmeKXetzbfcVWDcpTaipOiahwXZzfaEJ2Qh8%2BE%3D";
 const prefix = "local_repo/models/";
 
@@ -37,11 +35,24 @@ function getModelId(model) {
   );
 }
 
+// Clean up names, ignore functions/cte prefixes
 function canonicalizeRefTable(tableName) {
-  // convert "ref.dim_date" → "dim_date"
+  if (!tableName) return null;
+
+  // Strip ref.*
   if (tableName.startsWith("ref.")) {
-    return tableName.slice(4);
+    tableName = tableName.slice(4);
   }
+
+  // Strip dbt_source.*
+  if (tableName.startsWith("dbt_source.")) {
+    tableName = tableName.slice("dbt_source.".length);
+  }
+
+  // Ignore function-like tables
+  const ignorePrefixes = ["udtf:", "literal", "constant"];
+  if (ignorePrefixes.some((p) => tableName.startsWith(p))) return null;
+
   return tableName;
 }
 
@@ -76,7 +87,7 @@ function ensureNode(nodeMap, id, entity) {
   const sourceColumnIndex = {};
 
   // -------------------------------------------------------
-  // PASS 1 — BUILD MODEL NODES + COL COLUMN REFERENCES
+  // PASS 1 — BUILD MODEL NODES + COLUMN REFERENCES
   // -------------------------------------------------------
   for (const model of models) {
     const targetId = getModelId(model);
@@ -84,6 +95,13 @@ function ensureNode(nodeMap, id, entity) {
 
     const modelNode = ensureNode(nodeMap, targetId, "model");
     modelNode.fullModel = model;
+
+    // Collect model CTEs to ignore as nodes
+    const cteNames = new Set(
+      (model.intermediate_steps || [])
+        .map((s) => s.cte)
+        .filter(Boolean)
+    );
 
     if (model.columns) {
       modelNode.columns = model.columns;
@@ -103,8 +121,11 @@ function ensureNode(nodeMap, id, entity) {
           if (parts.length < 2) continue;
 
           let srcTable = parts.slice(0, -1).join(".");
-          srcTable = canonicalizeRefTable(srcTable);
           const srcCol = parts[parts.length - 1];
+
+          srcTable = canonicalizeRefTable(srcTable);
+          if (!srcTable) continue;            // ignore udtf:, literal, constant
+          if (cteNames.has(srcTable)) continue; // ignore internal CTE nodes
 
           sourceColumnIndex[srcTable] ??= {};
           sourceColumnIndex[srcTable][srcCol] ??= { usedBy: [] };
@@ -116,11 +137,8 @@ function ensureNode(nodeMap, id, entity) {
       }
     }
 
-    // -------------------------------------------------------
-    // NEW SOURCE/REF LOGIC — FIXED
-    // -------------------------------------------------------
+    // SOURCE BLOCK
     for (const src of model.sources || []) {
-      // REF → MODEL → MODEL
       if (src.type === "ref" && src.model) {
         const refModel = src.model.trim();
         ensureNode(nodeMap, refModel, "model");
@@ -128,36 +146,35 @@ function ensureNode(nodeMap, id, entity) {
         continue;
       }
 
-      // dbt_source → SOURCE → MODEL
       if (src.type === "dbt_source" && src.table) {
-        const srcId = `${src.name}.${src.table}`;
+        let srcId = `${src.name}.${src.table}`;
+        srcId = canonicalizeRefTable(srcId);
+        if (!srcId) continue;
+
         ensureNode(nodeMap, srcId, "source");
         edges.push({ source: srcId, target: targetId });
         continue;
       }
-
-      console.warn("Unknown source type:", src);
     }
   }
 
   // -------------------------------------------------------
-  // PASS 2 — APPLY INFERRED SOURCE COLUMN USAGE
+  // PASS 2 — MERGE + APPLY SOURCE COLUMN USAGE
   // -------------------------------------------------------
   const mergedSourceColumnIndex = {};
 
   for (const [tbl, cols] of Object.entries(sourceColumnIndex)) {
     const cleanTbl = canonicalizeRefTable(tbl);
+    if (!cleanTbl) continue;
 
     mergedSourceColumnIndex[cleanTbl] ??= {};
 
-    // Merge columns if both ref.dim_date and dim_date exist
     for (const [colName, info] of Object.entries(cols)) {
       mergedSourceColumnIndex[cleanTbl][colName] ??= { usedBy: [] };
       mergedSourceColumnIndex[cleanTbl][colName].usedBy.push(...info.usedBy);
     }
   }
 
-  // Create nodes for merged sources
   for (const [tbl, cols] of Object.entries(mergedSourceColumnIndex)) {
     const srcNode = ensureNode(nodeMap, tbl, "source");
     srcNode.columns ??= {};
@@ -209,12 +226,11 @@ function ensureNode(nodeMap, id, entity) {
         selector: 'node[entity="model"]',
         style: {
           "background-color": "#6cca98",
-          "border-width": 0,
           "label": "data(label)",
           "font-size": 11,
+          "color": "#003057",
           "text-valign": "center",
           "text-halign": "center",
-          "color": "#003057",
           "text-outline-width": 2,
           "text-outline-color": "#ffffff",
         },
@@ -248,7 +264,7 @@ function ensureNode(nodeMap, id, entity) {
   window.cy = cy;
 
   // -------------------------------------------------------
-  // ATTACH SCRATCH AFTER INIT
+  // ATTACH SCRATCH (needed for popup)
   // -------------------------------------------------------
   cy.nodes().forEach((ele) => {
     const id = ele.data("id");
