@@ -2,9 +2,16 @@
 <html>
 <head>
   <title>Lineage Explorer</title>
+  <!-- Load base Cytoscape -->
   <script src="https://unpkg.com/cytoscape/dist/cytoscape.min.js"></script>
+
+  <!-- Load COSE-Bilkent extension -->
   <script src="https://unpkg.com/cytoscape-cose-bilkent/cytoscape-cose-bilkent.js"></script>
 
+  <!-- Register extension -->
+  <script>
+    cytoscape.use(cytoscapeCoseBilkent);
+  </script>
   <style>
     html, body {
       margin: 0;
