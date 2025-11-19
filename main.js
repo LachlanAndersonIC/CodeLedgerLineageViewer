@@ -220,13 +220,23 @@ function ensureNode(nodeMap, id, entity) {
     layout: {
       name: "cose",
       animate: false,
-      randomize: false,
-      fit: true,
+
+      // Spread nodes further apart
+      idealEdgeLength: 160,
+      edgeElasticity: 0.15,
+      nodeRepulsion: 90000,
+      nodeOverlap: 20,
+
+      // Improve spacing between clusters
+      componentSpacing: 120,
       padding: 50,
-      nodeRepulsion: 95000,
-      idealEdgeLength: 180,
-      gravity: 0.25,
-      numIter: 2500
+      nestingFactor: 0.9,
+
+      // More stable iteration
+      numIter: 2500,
+      initialTemp: 200,
+      coolingFactor: 0.95,
+      gravity: 120,
     },
     style: [
       {
