@@ -37,6 +37,14 @@ function getModelId(model) {
   );
 }
 
+function canonicalizeRefTable(tableName) {
+  // convert "ref.dim_date" → "dim_date"
+  if (tableName.startsWith("ref.")) {
+    return tableName.slice(4);
+  }
+  return tableName;
+}
+
 function ensureNode(nodeMap, id, entity) {
   let node = nodeMap.get(id);
   if (!node) {
