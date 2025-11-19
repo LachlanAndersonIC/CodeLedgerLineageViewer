@@ -218,7 +218,7 @@ function ensureNode(nodeMap, id, entity) {
     container: document.getElementById("cy"),
     elements: allElements,
     layout: {
-      name: "cose-bilkent",
+      name: "cose",
       animate: false,
       randomize: false,
       fit: true,
