@@ -218,17 +218,15 @@ function ensureNode(nodeMap, id, entity) {
     container: document.getElementById("cy"),
     elements: allElements,
     layout: {
-      name: "cose",
+      name: "cose-bilkent",
+      animate: false,
+      randomize: false,
+      fit: true,
       padding: 50,
-      avoidOverlap: true,
-      nodeOverlap: 30,
-      componentSpacing: 120,
-      nodeRepulsion: 80000,
-      idealEdgeLength: 150,
-      edgeElasticity: 0.1,
-      nestingFactor: 0.9,
-      gravity: 80,
-      numIter: 2500,
+      nodeRepulsion: 95000,
+      idealEdgeLength: 180,
+      gravity: 0.25,
+      numIter: 2500
     },
     style: [
       {
