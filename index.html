@@ -2,7 +2,11 @@
 <html>
 <head>
   <title>Lineage Explorer</title>
-  <script src="https://cdn.jsdelivr.net/npm/cytoscape/dist/cytoscape.min.js"></script>
+  <script src="https://unpkg.com/cytoscape/dist/cytoscape.min.js"></script>
+  <script src="https://unpkg.com/cytoscape-fcose/cytoscape-fcose.js"></script>
+  <script>
+    cytoscape.use(fcose);
+  </script>
   <style>
     html, body {
       margin: 0;

@@ -218,26 +218,27 @@ function ensureNode(nodeMap, id, entity) {
     container: document.getElementById("cy"),
     elements: allElements,
     layout: {
-      name: "cose",
+      name: "fcose",
+      quality: "proof",
+      randomize: true,
       animate: false,
-
-      // Spread nodes further apart
-      idealEdgeLength: 160,
+      nodeSeparation: 120,
+      idealEdgeLength: 180,
       edgeElasticity: 0.15,
-      nodeRepulsion: 90000,
-      nodeOverlap: 20,
-
-      // Improve spacing between clusters
-      componentSpacing: 120,
-      padding: 50,
-      nestingFactor: 0.9,
-
-      // More stable iteration
-      numIter: 2500,
-      initialTemp: 200,
-      coolingFactor: 0.95,
-      gravity: 120,
+      gravity: 0.9,
+      packComponents: true,
     },
+    // layout: {
+    //   name: "cose",
+    //   animate: false,
+    //   randomize: false,
+    //   fit: true,
+    //   padding: 50,
+    //   nodeRepulsion: 95000,
+    //   idealEdgeLength: 180,
+    //   gravity: 0.25,
+    //   numIter: 2500
+    // },
     style: [
       {
         selector: 'node[entity="model"]',
