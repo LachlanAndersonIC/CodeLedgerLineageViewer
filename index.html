@@ -3,12 +3,12 @@
 <head>
   <title>Lineage Explorer</title>
   <!-- Load base Cytoscape -->
-  <script src="https://unpkg.com/cytoscape/dist/cytoscape.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape/dist/cytoscape.min.js"></script>
 
-  <!-- Load COSE-Bilkent extension -->
-  <script src="https://unpkg.com/cytoscape-cose-bilkent/cytoscape-cose-bilkent.js"></script>
+  <!-- Correct UMD version -->
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape-cose-bilkent/cytoscape-cose-bilkent.js"></script>
 
-  <!-- Register extension -->
+  <!-- Register the extension -->
   <script>
     cytoscape.use(cytoscapeCoseBilkent);
   </script>
