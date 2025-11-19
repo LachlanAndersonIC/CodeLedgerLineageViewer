@@ -102,7 +102,8 @@ function ensureNode(nodeMap, id, entity) {
           const parts = ref.split(".");
           if (parts.length < 2) continue;
 
-          const srcTable = parts.slice(0, -1).join(".");
+          let srcTable = parts.slice(0, -1).join(".");
+          srcTable = canonicalizeRefTable(srcTable);
           const srcCol = parts[parts.length - 1];
 
           sourceColumnIndex[srcTable] ??= {};
@@ -142,9 +143,25 @@ function ensureNode(nodeMap, id, entity) {
   // -------------------------------------------------------
   // PASS 2 — APPLY INFERRED SOURCE COLUMN USAGE
   // -------------------------------------------------------
+  const mergedSourceColumnIndex = {};
+
   for (const [tbl, cols] of Object.entries(sourceColumnIndex)) {
+    const cleanTbl = canonicalizeRefTable(tbl);
+
+    mergedSourceColumnIndex[cleanTbl] ??= {};
+
+    // Merge columns if both ref.dim_date and dim_date exist
+    for (const [colName, info] of Object.entries(cols)) {
+      mergedSourceColumnIndex[cleanTbl][colName] ??= { usedBy: [] };
+      mergedSourceColumnIndex[cleanTbl][colName].usedBy.push(...info.usedBy);
+    }
+  }
+
+  // Create nodes for merged sources
+  for (const [tbl, cols] of Object.entries(mergedSourceColumnIndex)) {
     const srcNode = ensureNode(nodeMap, tbl, "source");
     srcNode.columns ??= {};
+
     for (const [colName, info] of Object.entries(cols)) {
       srcNode.columns[colName] ??= {};
       srcNode.columns[colName].usedBy = info.usedBy;
