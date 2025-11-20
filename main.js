@@ -218,15 +218,12 @@ function ensureNode(nodeMap, id, entity) {
     container: document.getElementById("cy"),
     elements: allElements,
     layout: {
-      name: "fcose",
-      quality: "proof",
-      randomize: true,
-      animate: false,
-      nodeSeparation: 120,
-      idealEdgeLength: 180,
-      edgeElasticity: 0.15,
-      gravity: 0.9,
-      packComponents: true,
+      name: "dagre",
+      rankDir: "LR",   // LR = left→right, TB = top→bottom
+      nodeSep: 60,
+      rankSep: 180,
+      edgeSep: 30,
+      padding: 50
     },
     // layout: {
     //   name: "cose",
