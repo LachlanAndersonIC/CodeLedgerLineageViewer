@@ -220,10 +220,10 @@ function ensureNode(nodeMap, id, entity) {
     layout: {
       name: "dagre",
       rankDir: "LR",   // LR = left→right, TB = top→bottom
-      nodeSep: 20,
-      rankSep: 100,
-      edgeSep: 30,
-      padding: 20
+      nodeSep: 40,
+      rankSep: 70,
+      edgeSep: 15,
+      padding: 30
     },
     // layout: {
     //   name: "cose",
