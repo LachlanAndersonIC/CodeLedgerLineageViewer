@@ -219,9 +219,9 @@ function ensureNode(nodeMap, id, entity) {
     elements: allElements,
     layout: {
       name: "dagre",
-      rankDir: "LR",   // LR = left→right, TB = top→bottom
-      nodeSep: 40,
-      rankSep: 70,
+      rankDir: "LR",
+      nodeSep: 180,   // space between nodes on the same rank
+      rankSep: 240, 
       edgeSep: 15,
       padding: 30
     },
@@ -248,7 +248,11 @@ function ensureNode(nodeMap, id, entity) {
           "text-halign": "center",
           "text-outline-width": 2,
           "text-outline-color": "#ffffff",
-        },
+
+          "shape": "round-rectangle",
+          "width": 160,
+          "padding": 20
+        }
       },
       {
         selector: 'node[entity="source"]',
@@ -261,7 +265,11 @@ function ensureNode(nodeMap, id, entity) {
           "text-halign": "center",
           "text-outline-width": 2,
           "text-outline-color": "#003057",
-        },
+
+          "shape": "round-rectangle",
+          "width": 130,
+          "padding": 16
+        }
       },
       {
         selector: "edge",
