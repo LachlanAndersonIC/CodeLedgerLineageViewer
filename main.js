@@ -244,7 +244,7 @@ function ensureNode(nodeMap, id, entity) {
         style: {
           "background-color": "#6cca98",
           "label": "data(label)",
-          "font-size": 11,
+          "font-size": 18,
           "color": "#003057",
           "text-valign": "center",
           "text-halign": "center",
@@ -262,7 +262,7 @@ function ensureNode(nodeMap, id, entity) {
           "background-color": "#003057",
           "color": "#ffffff",
           "label": "data(label)",
-          "font-size": 10,
+          "font-size": 18,
           "text-valign": "center",
           "text-halign": "center",
           "text-outline-width": 2,
