@@ -220,10 +220,12 @@ function ensureNode(nodeMap, id, entity) {
     layout: {
       name: "dagre",
       rankDir: "LR",
-      nodeSep: 180,   // space between nodes on the same rank
-      rankSep: 240, 
-      edgeSep: 15,
-      padding: 30
+      ranker: "longest-path",   // ← THE FIX
+      nodeSep: 140,             // space between nodes on same rank
+      rankSep: 350,             // ← strong horizontal expansion
+      edgeSep: 30,
+      padding: 50,
+      minLen: 2       
     },
     // layout: {
     //   name: "cose",
