@@ -77,6 +77,24 @@ function ensureNode(nodeMap, id, entity) {
 
 (async () => {
   const files = await listJsonFiles();
+  // If no files found, show empty state message and stop
+  if (files.length === 0) {
+    const cyEl = document.getElementById("cy");
+    cyEl.innerHTML = `
+      <div style="
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        font-size: 24px;
+        color: #003057;
+        font-weight: 600;
+      ">
+        Nothing to Show
+      </div>
+    `;
+    return; // Stop execution so Cytoscape does not load
+  }
   const models = [];
   for (const file of files) {
     models.push(await fetchJson(file));
