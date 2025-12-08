@@ -1,16 +1,13 @@
 // SAS-enabled container URL
-const containerUrl = "https://aicodeledgerlineage.blob.core.windows.net/lineage?sp=rl&st=2025-11-18T01:29:42Z&se=2026-11-18T09:44:42Z&spr=https&sv=2024-11-04&sr=c&sig=X8%2BwAKmeKXetzbfcVWDcpTaipOiahwXZzfaEJ2Qh8%2BE%3D";
+// Example:
+// const containerUrl = "https://aicodeledgerlineage.blob.core.windows.net/lineage?sv=xxxx&sig=xxxx";
+const containerUrl = "https://aicodeledgerlineage.blob.core.windows.net/lineage?sp=obscured";
 const prefix = "local_repo/models/";
-
-// -------------------------------------------------------
-// FETCH FUNCTIONS
-// -------------------------------------------------------
 
 async function listJsonFiles() {
   const listUrl = `${containerUrl}&restype=container&comp=list&prefix=${prefix}`;
   const res = await fetch(listUrl);
   const xml = new DOMParser().parseFromString(await res.text(), "application/xml");
-
   return [...xml.getElementsByTagName("Blob")]
     .map((b) => b.getElementsByTagName("Name")[0].textContent)
     .filter((name) => name.endsWith(".json"));
@@ -23,37 +20,12 @@ async function fetchJson(name) {
   return res.json();
 }
 
-// -------------------------------------------------------
-// MODEL HELPERS
-// -------------------------------------------------------
-
 function getModelId(model) {
   return (
-    (model.model_name && model.model_name.trim()) ||
-    (model.target_table && model.target_table.trim()) ||
-    (model.file_name ? model.file_name.replace(".sql", "").trim() : null)
+    model.model_name ||
+    model.target_table ||
+    (model.file_name ? model.file_name.replace(".sql", "") : null)
   );
-}
-
-// Clean up names, ignore functions/cte prefixes
-function canonicalizeRefTable(tableName) {
-  if (!tableName) return null;
-
-  // Strip ref.*
-  if (tableName.startsWith("ref.")) {
-    tableName = tableName.slice(4);
-  }
-
-  // Strip dbt_source.*
-  if (tableName.startsWith("dbt_source.")) {
-    tableName = tableName.slice("dbt_source.".length);
-  }
-
-  // Ignore function-like tables
-  const ignorePrefixes = ["udtf:", "literal", "constant"];
-  if (ignorePrefixes.some((p) => tableName.startsWith(p))) return null;
-
-  return tableName;
 }
 
 function ensureNode(nodeMap, id, entity) {
@@ -71,29 +43,18 @@ function ensureNode(nodeMap, id, entity) {
   return node;
 }
 
-// -------------------------------------------------------
-// MAIN EXECUTION START
-// -------------------------------------------------------
-
 (async () => {
   const files = await listJsonFiles();
-  // If no files found, show empty state message and stop
+
+  // EMPTY STATE — no files found in Azure
   if (files.length === 0) {
-    const cyEl = document.getElementById("cy");
-    cyEl.innerHTML = `
-      <div style="
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        height: 100%;
-        font-size: 24px;
-        color: #003057;
-        font-weight: 600;
-      ">
-        Nothing to Show
-      </div>
-    `;
-    return; // Stop execution so Cytoscape does not load
+    const empty = document.getElementById("empty-state");
+    if (empty) empty.style.display = "flex";
+
+    const legend = document.getElementById("legend");
+    if (legend) legend.style.display = "none";
+
+    return; // stop — do not build graph
   }
   const models = [];
   for (const file of files) {
@@ -104,22 +65,14 @@ function ensureNode(nodeMap, id, entity) {
   const edges = [];
   const sourceColumnIndex = {};
 
-  // -------------------------------------------------------
-  // PASS 1 — BUILD MODEL NODES + COLUMN REFERENCES
-  // -------------------------------------------------------
+  // Pass 1 — construct nodes & collect model columns
   for (const model of models) {
     const targetId = getModelId(model);
     if (!targetId) continue;
 
     const modelNode = ensureNode(nodeMap, targetId, "model");
+    modelNode.label = targetId;
     modelNode.fullModel = model;
-
-    // Collect model CTEs to ignore as nodes
-    const cteNames = new Set(
-      (model.intermediate_steps || [])
-        .map((s) => s.cte)
-        .filter(Boolean)
-    );
 
     if (model.columns) {
       modelNode.columns = model.columns;
@@ -138,12 +91,8 @@ function ensureNode(nodeMap, id, entity) {
           const parts = ref.split(".");
           if (parts.length < 2) continue;
 
-          let srcTable = parts.slice(0, -1).join(".");
+          const srcTable = parts.slice(0, -1).join(".");
           const srcCol = parts[parts.length - 1];
-
-          srcTable = canonicalizeRefTable(srcTable);
-          if (!srcTable) continue;            // ignore udtf:, literal, constant
-          if (cteNames.has(srcTable)) continue; // ignore internal CTE nodes
 
           sourceColumnIndex[srcTable] ??= {};
           sourceColumnIndex[srcTable][srcCol] ??= { usedBy: [] };
@@ -155,59 +104,26 @@ function ensureNode(nodeMap, id, entity) {
       }
     }
 
-    // SOURCE BLOCK
     for (const src of model.sources || []) {
-      if (src.type === "ref" && src.model) {
-        const refModel = src.model.trim();
-        ensureNode(nodeMap, refModel, "model");
-        edges.push({ source: refModel, target: targetId });
-        continue;
-      }
-
-      if (src.type === "dbt_source" && src.table) {
-        let srcId = `${src.name}.${src.table}`;
-        srcId = canonicalizeRefTable(srcId);
-        if (!srcId) continue;
-
-        ensureNode(nodeMap, srcId, "source");
-        edges.push({ source: srcId, target: targetId });
-        continue;
-      }
+      const srcKey = src.table || src.model || "unknown_source";
+      const srcId = `${src.name}.${srcKey}`;
+      ensureNode(nodeMap, srcId, "source");
+      edges.push({ source: srcId, target: targetId });
     }
   }
 
-  // -------------------------------------------------------
-  // PASS 2 — MERGE + APPLY SOURCE COLUMN USAGE
-  // -------------------------------------------------------
-  const mergedSourceColumnIndex = {};
-
+  // Pass 2 — apply inferred columns to sources
   for (const [tbl, cols] of Object.entries(sourceColumnIndex)) {
-    const cleanTbl = canonicalizeRefTable(tbl);
-    if (!cleanTbl) continue;
-
-    mergedSourceColumnIndex[cleanTbl] ??= {};
-
-    for (const [colName, info] of Object.entries(cols)) {
-      mergedSourceColumnIndex[cleanTbl][colName] ??= { usedBy: [] };
-      mergedSourceColumnIndex[cleanTbl][colName].usedBy.push(...info.usedBy);
-    }
-  }
-
-  for (const [tbl, cols] of Object.entries(mergedSourceColumnIndex)) {
     const srcNode = ensureNode(nodeMap, tbl, "source");
     srcNode.columns ??= {};
-
     for (const [colName, info] of Object.entries(cols)) {
       srcNode.columns[colName] ??= {};
       srcNode.columns[colName].usedBy = info.usedBy;
     }
   }
 
-  // -------------------------------------------------------
-  // BUILD CYTOSCAPE ELEMENTS
-  // -------------------------------------------------------
+  // Build Cytoscape elements
   const allElements = [];
-
   for (const node of nodeMap.values()) {
     allElements.push({
       data: {
@@ -224,55 +140,30 @@ function ensureNode(nodeMap, id, entity) {
   }
 
   for (const e of edges) {
-    allElements.push({
-      data: { source: e.source, target: e.target },
-    });
+    allElements.push({ data: { source: e.source, target: e.target } });
   }
 
-  // -------------------------------------------------------
-  // INITIALIZE CYTOSCAPE
-  // -------------------------------------------------------
   const cy = cytoscape({
     container: document.getElementById("cy"),
     elements: allElements,
     layout: {
-      name: "dagre",
-      rankDir: "LR",
-      ranker: "longest-path",   // ← THE FIX
-      nodeSep: 140,             // space between nodes on same rank
-      rankSep: 350,             // ← strong horizontal expansion
-      edgeSep: 30,
+      name: "cose",
       padding: 50,
-      minLen: 2       
     },
-    // layout: {
-    //   name: "cose",
-    //   animate: false,
-    //   randomize: false,
-    //   fit: true,
-    //   padding: 50,
-    //   nodeRepulsion: 95000,
-    //   idealEdgeLength: 180,
-    //   gravity: 0.25,
-    //   numIter: 2500
-    // },
     style: [
       {
         selector: 'node[entity="model"]',
         style: {
           "background-color": "#6cca98",
+          "border-width": 0,
           "label": "data(label)",
-          "font-size": 13,
-          "color": "#003057",
+          "font-size": 11,
           "text-valign": "center",
           "text-halign": "center",
+          "color": "#003057",
           "text-outline-width": 2,
           "text-outline-color": "#ffffff",
-
-          "shape": "round-rectangle",
-          "width": 160,
-          "padding": 20
-        }
+        },
       },
       {
         selector: 'node[entity="source"]',
@@ -280,16 +171,12 @@ function ensureNode(nodeMap, id, entity) {
           "background-color": "#003057",
           "color": "#ffffff",
           "label": "data(label)",
-          "font-size": 13,
+          "font-size": 10,
           "text-valign": "center",
           "text-halign": "center",
           "text-outline-width": 2,
           "text-outline-color": "#003057",
-
-          "shape": "round-rectangle",
-          "width": 130,
-          "padding": 16
-        }
+        },
       },
       {
         selector: "edge",
@@ -306,9 +193,7 @@ function ensureNode(nodeMap, id, entity) {
 
   window.cy = cy;
 
-  // -------------------------------------------------------
-  // ATTACH SCRATCH (needed for popup)
-  // -------------------------------------------------------
+  // Ensure scratch is attached (Cytoscape ignores scratch in JSON init)
   cy.nodes().forEach((ele) => {
     const id = ele.data("id");
     const original = nodeMap.get(id);
@@ -318,9 +203,7 @@ function ensureNode(nodeMap, id, entity) {
     }
   });
 
-  // -------------------------------------------------------
-  // CLICK HANDLER — PANEL POPUP
-  // -------------------------------------------------------
+  // Click handler
   cy.on("tap", "node", (evt) => {
     const node = evt.target;
     const data = node.data();
@@ -347,10 +230,8 @@ function ensureNode(nodeMap, id, entity) {
         html += `<em>Sources:</em><br>`;
         const srcs = [];
 
-        if (meta.source)
-          srcs.push(...(Array.isArray(meta.source) ? meta.source : [meta.source]));
-        if (meta.derived_from)
-          srcs.push(...(Array.isArray(meta.derived_from) ? meta.derived_from : [meta.derived_from]));
+        if (meta.source) srcs.push(...(Array.isArray(meta.source) ? meta.source : [meta.source]));
+        if (meta.derived_from) srcs.push(...(Array.isArray(meta.derived_from) ? meta.derived_from : [meta.derived_from]));
 
         html += srcs.length
           ? srcs.map((s) => `- ${s}`).join("<br>")
@@ -374,5 +255,4 @@ function ensureNode(nodeMap, id, entity) {
 
     content.innerHTML = html;
   });
-
 })();
