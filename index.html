@@ -3,12 +3,7 @@
 <head>
   <title>Lineage Explorer</title>
   <script src="https://unpkg.com/cytoscape/dist/cytoscape.min.js"></script>
-  <script src="https://unpkg.com/dagre/dist/dagre.min.js"></script>
-  <script src="https://unpkg.com/cytoscape-dagre/cytoscape-dagre.js"></script>
 
-  <script>
-    cytoscape.use(cytoscapeDagre);
-  </script>
   <style>
     html, body {
       margin: 0;
@@ -17,6 +12,39 @@
       width: 100%;
       font-family: sans-serif;
       background: #ffffff;
+    }
+
+    #empty-state {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #ffffff;
+      z-index: 999; /* above everything */
+    }
+
+    .empty-box {
+      text-align: center;
+      padding: 40px 60px;
+      border-radius: 12px;
+      border: 2px solid #003057;
+      background: #f8fafc;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+
+    .empty-box h1 {
+      font-size: 28px;
+      color: #003057;
+      margin-bottom: 10px;
+    }
+
+    .empty-box p {
+      font-size: 16px;
+      color: #444;
     }
 
     /* Graph area (resized to leave room for right panel) */
@@ -122,6 +150,14 @@
     </div>
     <div class="legend-item">
       <span class="legend-color" style="background:#003057;"></span> Source
+    </div>
+  </div>
+
+  <!-- Nothing to display message box -->
+  <div id="empty-state" style="display:none;">
+    <div class="empty-box">
+      <h1>No Lineage Available</h1>
+      <p>There are currently no lineage files in storage to render.</p>
     </div>
   </div>
 
